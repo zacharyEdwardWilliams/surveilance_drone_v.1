@@ -1,0 +1,138 @@
+extends KinematicBody
+
+signal freeze
+signal unfreeze
+signal reset_player
+
+var player_detected = false
+
+export var speed = 5
+
+onready var nav = get_parent()
+
+enum {
+	IDLE,
+	CHASE,
+	CAUGHT,
+	ESCAPED,
+}
+
+var state = IDLE
+
+var path = []
+var cur_path_idx = 0
+var target = null
+onready var restart_target = get_owner().get_node("LOG_4_END (for_echo_soft) (V8)/Navigation/RESTART_TARGET_2")
+var velocity = Vector3.ZERO
+var threshold = .1
+var dir = null
+var goal_pos
+const TURN_SPEED = 0.5
+
+
+
+func _ready():
+	yield(owner, "ready")
+	target = owner.player
+	
+	
+	
+	
+func _on_SIGHT_body_entered(body):
+	if body.is_in_group("player"):
+		state = CHASE	
+	
+func _on_Area_body_entered(body):
+	if body.is_in_group("player"):
+		state = CAUGHT
+		print("CAUGHT")
+		
+func _on_SIGHT_body_exited(body):
+	if body.is_in_group("player"):
+		print("ESCAPED!")
+		state = ESCAPED
+		
+func _on_RESTART_AREA_2_body_entered(body):
+	if body.is_in_group("enemy"):
+		print("RETURNED TO RESTART AREA")
+		state = IDLE
+
+func _physics_process(delta):
+	match state:
+		IDLE:
+			$SIGHT_2/CollisionShape_2.disabled = false
+			$Area_2/CollisionShape_2.disabled = false
+			$WALKING_2.play("WALKING")
+		CHASE:
+			if path.size() > 0:
+				$WALKING_2.stop()
+				$SURVEILANCE_DRONE_MESH_2/AnimationPlayer_2.play("ALERT")
+				target = owner.player
+				move_to_target()
+				look_at(target.global_transform.origin, Vector3.UP)
+				rotate_y(deg2rad((rotation.y) * TURN_SPEED))
+		CAUGHT:
+			$SURVEILANCE_DRONE_MESH_2/AnimationPlayer_2.play("CAUGHT")
+			$SIGHT_2/CollisionShape_2.disabled = true
+			$Area_2/CollisionShape_2.disabled = true
+			emit_signal("freeze")
+			$SURVEILANCE_DRONE_MESH_2/AnimationPlayer_2.stop()
+			$SURVEILANCE_DRONE_MESH_2/CAUGHT_2.play("CAUGHT")
+#			look_at(target.global_transform.origin, Vector3.UP)
+#			rotate_y(deg2rad((rotation.y) * TURN_SPEED))
+			var t = Timer.new()
+			t.set_wait_time(3)
+			t.set_one_shot(true)
+			self.add_child(t)
+			t.start()
+			yield(t, "timeout")
+			t.queue_free()
+			
+			emit_signal("reset_player")
+			
+			var unfreeze_timer = Timer.new()
+			unfreeze_timer.set_wait_time(3)
+			unfreeze_timer.set_one_shot(true)
+			self.add_child(unfreeze_timer)
+			unfreeze_timer.start()
+			yield(unfreeze_timer, "timeout")
+			unfreeze_timer.queue_free()
+			emit_signal("unfreeze")
+			
+		ESCAPED:
+			$SURVEILANCE_DRONE_MESH_2/AnimationPlayer_2.play("WALKING")
+			# wait for 3 seconds
+			var t = Timer.new()
+			t.set_wait_time(3)
+			t.set_one_shot(true)
+			self.add_child(t)
+			t.start()
+			yield(t, "timeout")
+			t.queue_free()
+			# change target to restart_target
+			target = restart_target
+			# move surveillance drone to restart_target
+			move_to_target()
+			look_at(target.global_transform.origin, Vector3.UP)
+			rotate_y(deg2rad((rotation.y) * TURN_SPEED))
+			
+			
+		
+func move_to_target():
+	if cur_path_idx >= path.size():
+		return
+		
+	if global_transform.origin.distance_to(path[cur_path_idx]) < threshold:
+		cur_path_idx += 1
+		
+	else:
+		var direction = path[cur_path_idx] - global_transform.origin
+		velocity = direction.normalized() * speed
+		move_and_slide(velocity, Vector3.UP)
+		
+func get_target_path(target_pos):
+	path = nav.get_simple_path(global_transform.origin, target_pos)
+	cur_path_idx = 0
+
+func _on_Timer_timeout():
+	get_target_path(target.global_transform.origin)
